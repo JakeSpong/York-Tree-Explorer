@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>York Tree Explorer</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TreeExplorer">
+<meta name="theme-color" content="#2d4a27">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bark: #3d2b1f;
+    --moss: #4a6741;
+    --leaf: #7ab648;
+    --canopy: #2d4a27;
+    --sky: #c8dfe8;
+    --parchment: #f5efe3;
+    --gold: #c9a84c;
+    --shadow: 0 4px 32px rgba(30,20,10,0.18);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Mono', monospace; background: var(--bark); color: var(--bark); height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+  header { background: var(--canopy); color: var(--parchment); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; z-index: 1000; flex-shrink: 0; border-bottom: 3px solid var(--gold); }
+  header h1 { font-family: 'Playfair Display', serif; font-size: 1.25rem; line-height: 1.1; }
+  header h1 span { color: var(--gold); }
+  .header-stats { display: flex; gap: 14px; font-size: 0.7rem; color: var(--sky); }
+  .stat { text-align: center; line-height: 1.3; }
+  .stat strong { display: block; font-size: 1.1rem; color: var(--gold); font-family: 'Playfair Display', serif; }
+
+  .tabs { display: flex; background: var(--bark); flex-shrink: 0; z-index: 999; }
+  .tab { flex: 1; padding: 10px; text-align: center; font-size: 0.72rem; font-family: 'DM Mono', monospace; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; color: #a89070; border-bottom: 3px solid transparent; transition: all 0.2s; background: none; border-top: none; border-left: none; border-right: none; }
+  .tab.active { color: var(--parchment); border-bottom-color: var(--gold); background: rgba(255,255,255,0.05); }
+  .tab:hover { color: var(--parchment); }
+
+  .panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+  .panel.active { display: flex; }
+
+  #map { flex: 1; width: 100%; }
+
+  .marker-cluster-small { background-clip: padding-box; border-radius: 20px; }
+  .marker-cluster-medium { background-clip: padding-box; border-radius: 20px; }
+  .marker-cluster-large { background-clip: padding-box; border-radius: 20px; }
+  .marker-cluster-small { background-color: rgba(74,103,65,0.55); }
+  .marker-cluster-small div { background-color: rgba(74,103,65,0.9); }
+  .marker-cluster-medium { background-color: rgba(61,43,31,0.55); }
+  .marker-cluster-medium div { background-color: rgba(61,43,31,0.9); }
+  .marker-cluster-large { background-color: rgba(45,74,39,0.55); }
+  .marker-cluster-large div { background-color: rgba(45,74,39,0.9); }
+  .marker-cluster div { width: 36px; height: 36px; margin-left: 2px; margin-top: 2px; text-align: center; border-radius: 18px; font: bold 13px 'DM Mono', monospace; color: #f5efe3; line-height: 36px; }
+
+  #proximity-badge { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--canopy); color: var(--parchment); border: 2px solid var(--gold); border-radius: 24px; padding: 8px 18px; font-size: 0.75rem; z-index: 900; pointer-events: none; opacity: 0; transition: opacity 0.4s; white-space: nowrap; }
+  #proximity-badge.visible { opacity: 1; }
+  #proximity-badge.nearby { background: var(--moss); border-color: var(--leaf); }
+
+  #gps-status { position: absolute; top: 10px; right: 10px; background: rgba(245,239,227,0.96); border-radius: 8px; padding: 6px 10px; font-size: 0.68rem; z-index: 900; display: flex; align-items: center; gap: 6px; box-shadow: var(--shadow); }
+  .gps-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+  .gps-dot.active { background: var(--leaf); animation: pulse 1.5s infinite; }
+  .gps-dot.error { background: #e05; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(1.3);} }
+
+  #checklist-panel { background: var(--parchment); }
+  .cl-header { padding: 12px 16px 8px; background: var(--parchment); border-bottom: 1px solid #ddd4c0; flex-shrink: 0; }
+  .cl-header h2 { font-family: 'Playfair Display', serif; font-size: 1rem; color: var(--canopy); margin-bottom: 5px; }
+  .progress-bar-outer { height: 6px; background: #ddd4c0; border-radius: 3px; overflow: hidden; }
+  .progress-bar-inner { height: 100%; background: linear-gradient(90deg, var(--moss), var(--leaf)); border-radius: 3px; transition: width 0.5s; }
+  .prog-text { font-size: 0.65rem; color: #8a7a5a; margin-top: 3px; }
+  .sync-row { display: flex; align-items: center; gap: 5px; font-size: 0.6rem; color: #a08860; margin: 4px 0; }
+  .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+  .sync-dot.ok { background: var(--leaf); }
+  .sync-dot.syncing { background: var(--gold); animation: pulse 1s infinite; }
+  .sync-dot.err { background: #e05; }
+  .search-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  #search-input { flex: 1; padding: 7px 10px; border: 1.5px solid #c8b896; border-radius: 6px; font-family: 'DM Mono', monospace; font-size: 0.75rem; background: #fff; outline: none; color: var(--bark); }
+  #search-input:focus { border-color: var(--moss); }
+  .filter-btn { padding: 6px 10px; border: 1.5px solid #c8b896; border-radius: 6px; background: #fff; font-size: 0.68rem; font-family: 'DM Mono', monospace; cursor: pointer; color: var(--bark); white-space: nowrap; }
+  .filter-btn.on { background: var(--canopy); color: var(--parchment); border-color: var(--canopy); }
+
+  .cl-scroll { flex: 1; overflow-y: auto; padding: 8px 12px 16px; }
+  .sp-group { margin-bottom: 8px; }
+  .sp-label { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: #8a7a5a; padding: 6px 4px 3px; border-bottom: 1px solid #e0d6c4; margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .tree-item { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid #ece5d6; transition: background 0.15s; }
+  .tree-item:hover { background: #ede5d4; }
+  .tree-item.visited { background: rgba(74,103,65,0.07); }
+  .t-check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #b8a880; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: #fff; transition: all 0.2s; }
+  .tree-item.visited .t-check { background: var(--moss); border-color: var(--moss); }
+  .t-check svg { display: none; }
+  .tree-item.visited .t-check svg { display: block; }
+  .t-info { flex: 1; min-width: 0; }
+  .t-id { font-size: 0.6rem; color: #a08860; letter-spacing: 0.06em; }
+  .t-species { font-size: 0.82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t-bot { font-size: 0.68rem; color: var(--moss); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t-site { font-size: 0.63rem; color: #8a7a5a; }
+  .t-meta { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; align-items: center; }
+  .t-date { font-size: 0.6rem; color: var(--moss); }
+  .t-count { font-size: 0.6rem; background: var(--canopy); color: var(--parchment); border-radius: 10px; padding: 1px 6px; }
+  .t-map-btn { flex-shrink: 0; background: none; border: 1px solid #c8b896; border-radius: 6px; padding: 4px 7px; font-size: 0.65rem; cursor: pointer; color: var(--moss); font-family: 'DM Mono', monospace; }
+  .t-map-btn:hover { background: var(--canopy); color: #fff; border-color: var(--canopy); }
+
+  /* Popups */
+  .leaflet-popup-content-wrapper { background: var(--parchment) !important; border: 2px solid var(--gold) !important; border-radius: 10px !important; box-shadow: var(--shadow) !important; font-family: 'DM Mono', monospace !important; }
+  .leaflet-popup-content { margin: 12px 14px !important; min-width: 215px; }
+  .p-species { font-family: 'Playfair Display', serif; font-size: 1rem; color: var(--canopy); margin-bottom: 1px; }
+  .p-bot { font-style: italic; font-size: 0.72rem; color: var(--moss); margin-bottom: 7px; }
+  .p-row { font-size: 0.7rem; color: #6a5a3a; margin-bottom: 2px; }
+  .p-row strong { color: var(--bark); }
+  .p-divider { border: none; border-top: 1px solid #ddd4c0; margin: 8px 0; }
+  .p-visits { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .p-visits-badge { background: var(--canopy); color: var(--parchment); border-radius: 12px; padding: 2px 10px; font-size: 0.72rem; }
+  .p-my-date { font-size: 0.67rem; color: var(--moss); margin-bottom: 6px; }
+  .p-btn { width: 100%; padding: 7px; border: none; border-radius: 6px; font-family: 'DM Mono', monospace; font-size: 0.72rem; cursor: pointer; letter-spacing: 0.04em; margin-top: 4px; transition: all 0.2s; }
+  .p-btn-visit { background: var(--canopy); color: var(--parchment); }
+  .p-btn-visit:hover { background: var(--bark); }
+  .p-btn-done { background: var(--moss); color: #fff; cursor: default; }
+  .p-btn-unvisit { background: transparent; color: #a08860; border: 1px solid #c8b896; margin-top: 4px; }
+  .p-btn-unvisit:hover { background: #f0e8d8; }
+
+  #toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--canopy); color: var(--parchment); padding: 10px 20px; border-radius: 20px; font-size: 0.75rem; z-index: 9999; opacity: 0; transition: all 0.3s; border: 1.5px solid var(--gold); pointer-events: none; white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #map-panel { position: relative; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>York <span>Tree</span> Explorer</h1>
+    <div style="font-size:0.62rem;color:var(--sky);margin-top:2px;">Council-owned trees · York</div>
+  </div>
+  <div class="header-stats">
+    <div class="stat"><strong id="stat-total">0</strong>trees</div>
+    <div class="stat"><strong id="stat-visited">0</strong>my visits</div>
+    <div class="stat"><strong id="stat-nearby">—</strong>nearby</div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('map')">🗺 Map</button>
+  <button class="tab" onclick="switchTab('checklist')">☑ Checklist</button>
+</div>
+
+<div id="map-panel" class="panel active">
+  <div id="map"></div>
+  <div id="gps-status">
+    <div class="gps-dot" id="gps-dot"></div>
+    <span id="gps-text">Locating…</span>
+  </div>
+  <div id="proximity-badge">🌳 No trees nearby</div>
+</div>
+
+<div id="checklist-panel" class="panel">
+  <div class="cl-header">
+    <h2>Tree Checklist</h2>
+    <div class="progress-bar-outer"><div class="progress-bar-inner" id="prog-bar" style="width:0%"></div></div>
+    <div class="prog-text" id="prog-text">0 of 0 visited by you</div>
+    <div class="sync-row"><div class="sync-dot" id="sync-dot"></div><span id="sync-text">Loading shared visit data…</span></div>
+    <div class="search-row">
+      <input type="text" id="search-input" placeholder="Search species or site…" oninput="renderChecklist()">
+      <button class="filter-btn" id="filter-btn" onclick="toggleFilter()">Unvisited only</button>
+    </div>
+  </div>
+  <div class="cl-scroll" id="cl-scroll"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// SAMPLE DATA — replace the features array with your full GeoJSON
+// ════════════════════════════════════════════════════════════
+const GEOJSON = {
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "properties": { "OBJECTID": 703454, "TREEID": "U06781", "SITE_NAME": "Rowntree Park", "SPECIES": "Ash", "BOTANICAL": "Fraxinus Excelsior", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.082524393284091, 53.946611246994394 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703456, "TREEID": "U06785", "SITE_NAME": "Rowntree Park", "SPECIES": "Ash", "BOTANICAL": "Fraxinus Excelsior", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.082612730233047, 53.946696318140546 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703457, "TREEID": "U06790", "SITE_NAME": "Rowntree Park", "SPECIES": "Ash", "BOTANICAL": "Fraxinus Excelsior", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.083033533957858, 53.946732244304577 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703460, "TREEID": "U06795", "SITE_NAME": "Rowntree Park", "SPECIES": "Oak", "BOTANICAL": "Quercus Robur", "OWNER": "Leisure", "Planted": "1" }, "geometry": { "type": "Point", "coordinates": [ -1.082900, 53.947100 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703461, "TREEID": "U06796", "SITE_NAME": "Rowntree Park", "SPECIES": "Lime", "BOTANICAL": "Tilia Europaea", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.083200, 53.946850 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703462, "TREEID": "U06800", "SITE_NAME": "Rowntree Park", "SPECIES": "Sycamore", "BOTANICAL": "Acer Pseudoplatanus", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.081800, 53.947200 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703463, "TREEID": "U06801", "SITE_NAME": "Museum Gardens", "SPECIES": "Horse Chestnut", "BOTANICAL": "Aesculus Hippocastanum", "OWNER": "Leisure", "Planted": "1" }, "geometry": { "type": "Point", "coordinates": [ -1.085600, 53.962100 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703464, "TREEID": "U06802", "SITE_NAME": "Museum Gardens", "SPECIES": "Beech", "BOTANICAL": "Fagus Sylvatica", "OWNER": "Leisure", "Planted": "1" }, "geometry": { "type": "Point", "coordinates": [ -1.085200, 53.962300 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703465, "TREEID": "U06803", "SITE_NAME": "Museum Gardens", "SPECIES": "Yew", "BOTANICAL": "Taxus Baccata", "OWNER": "Leisure", "Planted": "0" }, "geometry": { "type": "Point", "coordinates": [ -1.085000, 53.962000 ] } },
+    { "type": "Feature", "properties": { "OBJECTID": 703466, "TREEID": "U06804", "SITE_NAME": "Clifton Moor", "SPECIES": "Silver Birch", "BOTANICAL": "Betula Pendula", "OWNER": "Highways", "Planted": "1" }, "geometry": { "type": "Point", "coordinates": [ -1.097000, 53.978000 ] } },
+  ]
+};
+
+// ════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════
+const PROXIMITY_M = 50;
+const SHARED_KEY  = 'york_trees_global_v1'; // shared across all users
+
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+// myVisits persisted in localStorage per device/user
+// { TREEID: { date: ISO string } }
+let myVisits = {};
+try { myVisits = JSON.parse(localStorage.getItem('york_trees_my_visits') || '{}'); } catch(e){}
+
+// globalVisits loaded from shared storage { TREEID: count }
+let globalVisits = {};
+
+let userLatLng   = null;
+let map, userMarker, userCircle, clusterGroup;
+let markerData   = {}; // TREEID → { marker, lat, lng, props }
+let filterUnvis  = false;
+
+// ════════════════════════════════════════════════════════════
+// SHARED STORAGE
+// ════════════════════════════════════════════════════════════
+async function loadGlobal() {
+  setSyncUI('syncing', 'Syncing shared visit data…');
+  try {
+    const r = await window.storage.get(SHARED_KEY, true);
+    globalVisits = r ? JSON.parse(r.value) : {};
+    setSyncUI('ok', `Shared data synced · ${Object.keys(globalVisits).length} trees recorded`);
+  } catch(e) {
+    globalVisits = {};
+    setSyncUI('ok', 'No shared data yet — you can be first!');
+  }
+  refreshAllMarkers();
+  renderChecklist();
+}
+
+async function saveGlobal() {
+  setSyncUI('syncing', 'Saving…');
+  try {
+    await window.storage.set(SHARED_KEY, JSON.stringify(globalVisits), true);
+    setSyncUI('ok', 'Saved & synced ✓');
+  } catch(e) {
+    setSyncUI('err', 'Save failed — check connection');
+  }
+}
+
+function setSyncUI(state, msg) {
+  const dot = document.getElementById('sync-dot');
+  const txt = document.getElementById('sync-text');
+  if (dot) dot.className = 'sync-dot ' + state;
+  if (txt) txt.textContent = msg;
+}
+
+// ════════════════════════════════════════════════════════════
+// HAVERSINE
+// ════════════════════════════════════════════════════════════
+function haversine(la1, ln1, la2, ln2) {
+  const R = 6371000, toR = Math.PI/180;
+  const dLa = (la2-la1)*toR, dLn = (ln2-ln1)*toR;
+  const a = Math.sin(dLa/2)**2 + Math.cos(la1*toR)*Math.cos(la2*toR)*Math.sin(dLn/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ════════════════════════════════════════════════════════════
+// ICONS
+// ════════════════════════════════════════════════════════════
+function makeIcon(isVisited, isNearby) {
+  const bg   = isVisited ? '#4a6741' : isNearby ? '#c9a84c' : '#3d2b1f';
+  const ring = isNearby  ? '3px solid #c9a84c' : '2px solid rgba(255,255,255,0.3)';
+  const icon = isVisited ? '✓' : '🌳';
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:28px;height:28px;border-radius:50% 50% 50% 0;background:${bg};border:${ring};transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;">
+             <span style="transform:rotate(45deg);font-size:13px;">${icon}</span></div>`,
+    iconSize: [28,28], iconAnchor: [14,28], popupAnchor: [0,-30]
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// MAP INIT
+// ════════════════════════════════════════════════════════════
+function initMap() {
+  map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
+
+  clusterGroup = L.markerClusterGroup({
+    maxClusterRadius: 60,
+    showCoverageOnHover: false,
+    iconCreateFunction(cluster) {
+      const n = cluster.getChildCount();
+      const cls = n < 10 ? 'small' : n < 100 ? 'medium' : 'large';
+      return L.divIcon({ html: `<div><span>${n}</span></div>`, className: `marker-cluster marker-cluster-${cls}`, iconSize: L.point(40,40) });
+    }
+  });
+
+  const bounds = [];
+  GEOJSON.features.forEach(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const p = f.properties;
+    bounds.push([lat, lng]);
+    const marker = L.marker([lat, lng], { icon: makeIcon(!!myVisits[p.TREEID], false) });
+    marker.bindPopup(() => buildPopup(f), { maxWidth: 270 });
+    clusterGroup.addLayer(marker);
+    markerData[p.TREEID] = { marker, lat, lng, props: p };
+  });
+
+  map.addLayer(clusterGroup);
+  if (bounds.length) map.fitBounds(bounds, { padding: [30,30] });
+  updateStats();
+}
+
+// ════════════════════════════════════════════════════════════
+// POPUP
+// ════════════════════════════════════════════════════════════
+function buildPopup(f) {
+  const p   = f.properties;
+  const id  = p.TREEID;
+  const vis = !!myVisits[id];
+  const dt  = vis ? fmtDate(myVisits[id].date) : null;
+  const tot = globalVisits[id] || 0;
+
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <div class="p-species">${p.SPECIES}</div>
+    <div class="p-bot">${p.BOTANICAL}</div>
+    <div class="p-row"><strong>ID:</strong> ${p.TREEID}</div>
+    <div class="p-row"><strong>Site:</strong> ${p.SITE_NAME}</div>
+    <div class="p-row"><strong>Owner:</strong> ${p.OWNER}</div>
+    ${p.Planted === "1" ? '<div class="p-row">🌱 Planted tree</div>' : ''}
+    <hr class="p-divider">
+    <div class="p-visits"><span class="p-visits-badge">👥 ${tot} total visit${tot !== 1 ? 's' : ''}</span></div>
+    ${vis ? `<div class="p-my-date">📅 You visited: ${dt}</div>` : ''}
+    ${vis
+      ? `<button class="p-btn p-btn-done" disabled>✓ You've visited this tree</button>
+         <button class="p-btn p-btn-unvisit" id="pu-${id}">↩ Remove my visit</button>`
+      : `<button class="p-btn p-btn-visit" id="pv-${id}">Mark as Visited</button>`
+    }`;
+
+  setTimeout(() => {
+    const vb = document.getElementById(`pv-${id}`);
+    const ub = document.getElementById(`pu-${id}`);
+    if (vb) vb.onclick = async () => { await markVisited(id); map.closePopup(); setTimeout(() => markerData[id]?.marker.openPopup(), 200); };
+    if (ub) ub.onclick = async () => { await unmarkVisited(id); map.closePopup(); setTimeout(() => markerData[id]?.marker.openPopup(), 200); };
+  }, 40);
+  return div;
+}
+
+// ════════════════════════════════════════════════════════════
+// VISIT LOGIC
+// ════════════════════════════════════════════════════════════
+async function markVisited(id) {
+  myVisits[id] = { date: new Date().toISOString() };
+  localStorage.setItem('york_trees_my_visits', JSON.stringify(myVisits));
+  globalVisits[id] = (globalVisits[id] || 0) + 1;
+  await saveGlobal();
+  refreshAllMarkers();
+  renderChecklist();
+  updateStats();
+  showToast('🌳 Visited! Great find.');
+}
+
+async function unmarkVisited(id) {
+  if (!myVisits[id]) return;
+  delete myVisits[id];
+  localStorage.setItem('york_trees_my_visits', JSON.stringify(myVisits));
+  if (globalVisits[id]) globalVisits[id] = Math.max(0, globalVisits[id] - 1);
+  await saveGlobal();
+  refreshAllMarkers();
+  renderChecklist();
+  updateStats();
+  showToast('↩ Visit removed');
+}
+
+function refreshAllMarkers() {
+  const near = getNearbySet();
+  Object.entries(markerData).forEach(([id, m]) => m.marker.setIcon(makeIcon(!!myVisits[id], near.has(id))));
+}
+
+function getNearbySet() {
+  const s = new Set();
+  if (!userLatLng) return s;
+  Object.entries(markerData).forEach(([id, m]) => {
+    if (haversine(userLatLng.lat, userLatLng.lng, m.lat, m.lng) <= PROXIMITY_M) s.add(id);
+  });
+  return s;
+}
+
+// ════════════════════════════════════════════════════════════
+// GPS
+// ════════════════════════════════════════════════════════════
+function initGPS() {
+  if (!navigator.geolocation) {
+    document.getElementById('gps-text').textContent = 'GPS unavailable';
+    document.getElementById('gps-dot').classList.add('error');
+    return;
+  }
+  navigator.geolocation.watchPosition(onGPS, onGPSErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+}
+
+function onGPS(pos) {
+  const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
+  userLatLng = { lat, lng };
+  document.getElementById('gps-dot').className = 'gps-dot active';
+  document.getElementById('gps-text').textContent = `±${Math.round(acc)}m`;
+  if (!userMarker) {
+    userMarker = L.circleMarker([lat, lng], { radius:8, color:'#1a7abf', fillColor:'#5ab4f0', fillOpacity:0.9, weight:2 }).addTo(map);
+    userCircle = L.circle([lat, lng], { radius:PROXIMITY_M, color:'#1a7abf', fillColor:'#5ab4f0', fillOpacity:0.07, weight:1, dashArray:'5,5' }).addTo(map);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+    userCircle.setLatLng([lat, lng]);
+  }
+  updateProximity();
+}
+
+function onGPSErr() {
+  document.getElementById('gps-dot').className = 'gps-dot error';
+  document.getElementById('gps-text').textContent = 'GPS error';
+}
+
+function updateProximity() {
+  const near = getNearbySet();
+  const badge = document.getElementById('proximity-badge');
+  document.getElementById('stat-nearby').textContent = near.size || '0';
+  refreshAllMarkers();
+  if (near.size === 0) {
+    badge.textContent = '🌳 No trees within 50m';
+    badge.className = 'visible';
+  } else {
+    const unv = [...near].filter(id => !myVisits[id]).length;
+    badge.textContent = `🌳 ${near.size} tree${near.size > 1 ? 's' : ''} nearby${unv ? ` · ${unv} unvisited` : ' · all visited!'}`;
+    badge.className = 'visible nearby';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// STATS
+// ════════════════════════════════════════════════════════════
+function updateStats() {
+  const tot = GEOJSON.features.length;
+  const vis = Object.keys(myVisits).length;
+  document.getElementById('stat-total').textContent   = tot;
+  document.getElementById('stat-visited').textContent = vis;
+  document.getElementById('prog-text').textContent    = `${vis} of ${tot} visited by you`;
+  document.getElementById('prog-bar').style.width     = `${tot ? (vis/tot*100) : 0}%`;
+}
+
+// ════════════════════════════════════════════════════════════
+// CHECKLIST
+// ════════════════════════════════════════════════════════════
+function renderChecklist() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const groups = {};
+
+  GEOJSON.features.forEach(f => {
+    const p  = f.properties;
+    const id = p.TREEID;
+    const vis = !!myVisits[id];
+    if (filterUnvis && vis) return;
+    if (q && ![p.SPECIES, p.SITE_NAME, p.BOTANICAL].some(s => s.toLowerCase().includes(q))) return;
+    if (!groups[p.SPECIES]) groups[p.SPECIES] = [];
+    groups[p.SPECIES].push({ ...p, vis, date: myVisits[id]?.date || null, total: globalVisits[id] || 0 });
+  });
+
+  let html = '';
+  Object.keys(groups).sort().forEach(sp => {
+    const trees = groups[sp];
+    const vc = trees.filter(t => t.vis).length;
+    html += `<div class="sp-group">
+      <div class="sp-label"><span>${sp}</span><span>${vc}/${trees.length} my visits</span></div>`;
+    trees.forEach(t => {
+      html += `
+        <div class="tree-item ${t.vis ? 'visited' : ''}" onclick="toggleVisit('${t.TREEID}')">
+          <div class="t-check">
+            <svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="t-info">
+            <div class="t-id">${t.TREEID}</div>
+            <div class="t-species">${t.SPECIES}</div>
+            <div class="t-bot">${t.BOTANICAL}</div>
+            <div class="t-site">${t.SITE_NAME}${t.Planted === "1" ? ' · 🌱 planted' : ''}</div>
+            <div class="t-meta">
+              ${t.vis    ? `<span class="t-date">📅 ${fmtDate(t.date)}</span>` : ''}
+              ${t.total > 0 ? `<span class="t-count">👥 ${t.total} visit${t.total !== 1 ? 's' : ''}</span>` : ''}
+            </div>
+          </div>
+          <button class="t-map-btn" onclick="event.stopPropagation();locateTree('${t.TREEID}')">📍 Map</button>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+
+  if (!html) html = `<div style="padding:24px;text-align:center;color:#8a7a5a;font-size:0.8rem;">No trees match your search.</div>`;
+  document.getElementById('cl-scroll').innerHTML = html;
+}
+
+async function toggleVisit(id) {
+  if (myVisits[id]) await unmarkVisited(id);
+  else await markVisited(id);
+}
+
+function locateTree(id) {
+  const m = markerData[id];
+  if (!m) return;
+  switchTab('map');
+  setTimeout(() => clusterGroup.zoomToShowLayer(m.marker, () => m.marker.openPopup()), 150);
+}
+
+// ════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════
+function fmtDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+
+function toggleFilter() {
+  filterUnvis = !filterUnvis;
+  document.getElementById('filter-btn').classList.toggle('on', filterUnvis);
+  renderChecklist();
+}
+
+function switchTab(tab) {
+  ['map','checklist'].forEach((t,i) => {
+    document.querySelectorAll('.tab')[i].classList.toggle('active', t === tab);
+    document.getElementById(t === 'map' ? 'map-panel' : 'checklist-panel').classList.toggle('active', t === tab);
+  });
+  if (tab === 'map')       setTimeout(() => map.invalidateSize(), 50);
+  if (tab === 'checklist') { renderChecklist(); loadGlobal(); }
+}
+
+let toastT;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+// ════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════
+initMap();
+initGPS();
+updateStats();
+loadGlobal();
+
+// ── SERVICE WORKER (PWA) ──────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.warn('SW failed:', err));
+  });
+}
+</script>
+</body>
+</html>
