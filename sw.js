@@ -1,9 +1,10 @@
-const CACHE_NAME = 'york-trees-v1';
+const CACHE_NAME = 'york-trees-v4';
 
 // Resources to cache on install (app shell)
 const PRECACHE_URLS = [
   './index.html',
   './manifest.json',
+  './trees.geojson',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js',
