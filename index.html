@@ -19,7 +19,28 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
-<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+<script>
+// Inline two-finger rotation — no external dependency needed.
+// Attaches after Leaflet loads. Rotates the map container div via CSS,
+// keeps GPS dot and popups aligned by counter-rotating overlay panes.
+window._mapRotation = {
+  bearing: 0,
+  apply: function(map, deg) {
+    this.bearing = deg;
+    const container = map.getContainer();
+    container.style.transform = `rotate(${deg}deg)`;
+    container.style.transformOrigin = '50% 50%';
+    // Counter-rotate the control and popup panes so they stay upright
+    const panes = ['controlContainer', 'popupPane', 'tooltipPane'];
+    panes.forEach(p => {
+      const el = map.getPanes ? map.getPanes()[p] : null;
+      if (el) { el.style.transform = `rotate(${-deg}deg)`; el.style.transformOrigin = '50% 50%'; }
+    });
+    map.fire('rotate', { bearing: deg });
+  },
+  getBearing: function() { return this.bearing; }
+};
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -372,25 +393,17 @@ function makeSuggestIcon() {
 // ════════════════════════════════════════════════════════════
 function initMap() {
   map = L.map('map', {
-    zoomControl: true,
-    rotate: true,         // leaflet-rotate: enable rotation API
-    touchRotate: true,    // leaflet-rotate: two-finger twist gesture
-    rotateControl: false, // we provide our own north-reset button
-    bearing: 0
+    zoomControl: true
   });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap', maxZoom:19 }).addTo(map);
 
-  // North-reset button — appears when map is rotated
+  // North-reset button — updated by our custom rotation handler
   map.on('rotate', function(e) {
-    const bearing = map.getBearing ? map.getBearing() : 0;
+    const bearing = e.bearing || 0;
     const btn = document.getElementById('north-btn');
     if (!btn) return;
-    if (Math.abs(bearing) > 2) {
-      btn.style.display = 'flex';
-      btn.style.transform = `rotate(${-bearing}deg)`;
-    } else {
-      btn.style.display = 'none';
-    }
+    btn.style.display = Math.abs(bearing) > 2 ? 'flex' : 'none';
+    btn.style.transform = `rotate(${-bearing}deg)`;
   });
 
   clusterGroup = L.markerClusterGroup({
@@ -418,11 +431,55 @@ function initMap() {
   if (bounds.length) map.fitBounds(bounds, { padding:[30,30] });
   updateStats();
 
+  // Initialise touch rotation
+  window._initTouchRotation(map);
+
   // Handle map click for suggest mode
   map.on('click', onMapClick);
 }
 
-// Touch rotation handled natively by leaflet-rotate plugin (touchRotate: true)
+// ── Two-finger touch rotation ────────────────────────────────────────────────
+(function() {
+  let startAngle  = null;
+  let startBear   = 0;
+
+  function getTouchAngle(touches) {
+    const dx = touches[1].clientX - touches[0].clientX;
+    const dy = touches[1].clientY - touches[0].clientY;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+  }
+
+  // We attach to the map container AFTER map is initialised (called from initMap end)
+  window._initTouchRotation = function(map) {
+    const el = map.getContainer();
+
+    el.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        startAngle = getTouchAngle(e.touches);
+        startBear  = window._mapRotation.bearing;
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 2 && startAngle !== null) {
+        e.preventDefault();
+        const angle = getTouchAngle(e.touches);
+        const delta = angle - startAngle;
+        window._mapRotation.apply(map, startBear + delta);
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchend', function(e) {
+      if (e.touches.length < 2) {
+        startAngle = null;
+        // Snap to north if within 12 degrees
+        const b = ((window._mapRotation.bearing % 360) + 360) % 360;
+        if (b < 12 || b > 348) smoothRotateTo(0);
+      }
+    }, { passive: true });
+  };
+})();
 
 // ════════════════════════════════════════════════════════════
 // POPUP — tree attributes + visit + status reporting
@@ -565,10 +622,22 @@ function getNearbySet() {
 // SUGGEST MODE
 // ════════════════════════════════════════════════════════════
 function resetNorth() {
-  if (map.setBearing) {
-    map.setBearing(0, { animate: true, duration: 0.4 });
-  }
+  smoothRotateTo(0);
   document.getElementById('north-btn').style.display = 'none';
+}
+
+function smoothRotateTo(targetDeg) {
+  const start   = window._mapRotation.bearing;
+  const diff    = targetDeg - start;
+  const dur     = 350; // ms
+  const t0      = performance.now();
+  function step(now) {
+    const p = Math.min(1, (now - t0) / dur);
+    const ease = p < 0.5 ? 2*p*p : -1+(4-2*p)*p; // ease in-out quad
+    window._mapRotation.apply(map, start + diff * ease);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
 }
 
 function toggleSuggestMode() {
@@ -697,7 +766,7 @@ function initGPS() {
     document.getElementById('gps-dot').classList.add('error');
     return;
   }
-  navigator.geolocation.watchPosition(onGPS, onGPSErr, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
+  navigator.geolocation.watchPosition(onGPS, onGPSErr, { enableHighAccuracy:true, maximumAge:10000, timeout:30000 });
 }
 
 function onGPS(pos) {
@@ -715,9 +784,28 @@ function onGPS(pos) {
   updateProximity();
 }
 
-function onGPSErr() {
+function onGPSErr(err) {
   document.getElementById('gps-dot').className = 'gps-dot error';
-  document.getElementById('gps-text').textContent = 'GPS error';
+  const msgs = {
+    1: 'Location blocked — tap 🔒 to allow',
+    2: 'Location unavailable',
+    3: 'Location timed out'
+  };
+  const msg = msgs[err.code] || 'GPS error';
+  document.getElementById('gps-text').textContent = msg;
+  console.warn('GPS error', err.code, err.message);
+
+  // Show a persistent banner for permission denied (most common issue)
+  if (err.code === 1) {
+    const badge = document.getElementById('proximity-badge');
+    badge.innerHTML = '📍 Location blocked — tap the 🔒 padlock to allow';
+    badge.className = 'visible';
+    badge.style.cursor = 'pointer';
+    badge.style.pointerEvents = 'auto';
+    badge.onclick = () => {
+      badge.innerHTML = 'Open browser Settings → Site permissions → Location → Allow, then refresh';
+    };
+  }
 }
 
 function updateProximity() {
@@ -864,17 +952,16 @@ function showToast(msg) {
 // BOOT — fetch GeoJSON first, then initialise everything
 // ════════════════════════════════════════════════════════════
 async function boot() {
-  // Show a simple loading message while fetching
-  document.getElementById('gps-text').textContent = 'Loading trees…';
+  document.getElementById('gps-text').textContent = 'Loading data…';
   try {
     const res = await fetch('./trees.geojson');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     GEOJSON = await res.json();
-    console.log('Loaded', GEOJSON.features.length, 'trees');
+    console.log('Loaded', GEOJSON.features.length, 'trees from trees.geojson');
   } catch(e) {
     console.error('Could not load trees.geojson:', e);
-    // App still works, just with no trees — show a helpful message
-    showToast('⚠ Could not load tree data');
+    document.getElementById('gps-text').textContent = '⚠ Tree data failed';
+    showToast('⚠ Could not load trees.geojson — check file exists on server');
   }
   initMap();
   initGPS();
