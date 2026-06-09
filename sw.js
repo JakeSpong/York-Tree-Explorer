@@ -1,4 +1,4 @@
-const CACHE_NAME = 'york-trees-v6';
+const CACHE_NAME = 'york-trees-v7';
 
 // Resources to cache on install (app shell)
 const PRECACHE_URLS = [

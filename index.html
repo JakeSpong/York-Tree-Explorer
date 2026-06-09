@@ -21,24 +21,45 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
 <script>
-// Inline two-finger rotation — no external dependency needed.
-// Attaches after Leaflet loads. Rotates the map container div via CSS,
-// keeps GPS dot and popups aligned by counter-rotating overlay panes.
+// ── Map rotation — rotates the internal tilePane/shadowPane/markerPane
+// rather than the outer container, so the viewport never shows corners.
+// Overlay panes (popups, controls) are counter-rotated to stay upright.
 window._mapRotation = {
   bearing: 0,
+
   apply: function(map, deg) {
     this.bearing = deg;
-    const container = map.getContainer();
-    container.style.transform = `rotate(${deg}deg)`;
-    container.style.transformOrigin = '50% 50%';
-    // Counter-rotate the control and popup panes so they stay upright
-    const panes = ['controlContainer', 'popupPane', 'tooltipPane'];
-    panes.forEach(p => {
-      const el = map.getPanes ? map.getPanes()[p] : null;
-      if (el) { el.style.transform = `rotate(${-deg}deg)`; el.style.transformOrigin = '50% 50%'; }
+    const panes = map.getPanes();
+
+    // Panes that rotate WITH the map (tiles, markers, vectors)
+    const rotatePanes = ['tilePane', 'shadowPane', 'markerPane',
+                         'overlayPane', 'pathPane', 'vectorPane'];
+    rotatePanes.forEach(name => {
+      const el = panes[name];
+      if (el) {
+        el.style.transformOrigin = '50% 50%';
+        // Preserve Leaflet's translate3d and add our rotation
+        const existing = el.style.transform.match(/translate3d\([^)]+\)/);
+        const t = existing ? existing[0] : '';
+        el.style.transform = `${t} rotate(${deg}deg)`;
+      }
     });
+
+    // Panes that counter-rotate to stay upright (popups, controls, tooltips)
+    const fixedPanes = ['popupPane', 'tooltipPane', 'controlContainer'];
+    fixedPanes.forEach(name => {
+      const el = panes[name];
+      if (el) {
+        el.style.transformOrigin = '50% 50%';
+        const existing = el.style.transform.match(/translate3d\([^)]+\)/);
+        const t = existing ? existing[0] : '';
+        el.style.transform = `${t} rotate(${-deg}deg)`;
+      }
+    });
+
     map.fire('rotate', { bearing: deg });
   },
+
   getBearing: function() { return this.bearing; }
 };
 </script>
@@ -74,6 +95,11 @@ window._mapRotation = {
   .panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
   .panel.active { display: flex; }
   #map { flex: 1; width: 100%; touch-action: none; }
+  /* Clip the map panel so rotated tile edges never show outside the viewport */
+  #map-panel { overflow: hidden; }
+  /* Scale tile pane slightly so corners don't appear at any rotation angle.
+     sqrt(2) ≈ 1.415 covers full 45° rotation; 1.5 gives comfortable margin. */
+  .leaflet-tile-pane { transform-origin: 50% 50%; }
   #map-panel { position: relative; }
 
   /* Clusters */
@@ -458,6 +484,9 @@ function initMap() {
         e.preventDefault();
         startAngle = getTouchAngle(e.touches);
         startBear  = window._mapRotation.bearing;
+        // Disable Leaflet's built-in pan/zoom so only our rotation fires
+        map.dragging.disable();
+        map.touchZoom.disable();
       }
     }, { passive: false });
 
@@ -471,6 +500,9 @@ function initMap() {
     }, { passive: false });
 
     el.addEventListener('touchend', function(e) {
+      // Re-enable pan/zoom when fingers lift
+      map.dragging.enable();
+      map.touchZoom.enable();
       if (e.touches.length < 2) {
         startAngle = null;
         // Snap to north if within 12 degrees
