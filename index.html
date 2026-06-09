@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>York Tree Explorer</title>
 
 <!-- PWA -->
@@ -20,49 +20,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
-<script>
-// ── Map rotation — rotates the internal tilePane/shadowPane/markerPane
-// rather than the outer container, so the viewport never shows corners.
-// Overlay panes (popups, controls) are counter-rotated to stay upright.
-window._mapRotation = {
-  bearing: 0,
 
-  apply: function(map, deg) {
-    this.bearing = deg;
-    const panes = map.getPanes();
-
-    // Panes that rotate WITH the map (tiles, markers, vectors)
-    const rotatePanes = ['tilePane', 'shadowPane', 'markerPane',
-                         'overlayPane', 'pathPane', 'vectorPane'];
-    rotatePanes.forEach(name => {
-      const el = panes[name];
-      if (el) {
-        el.style.transformOrigin = '50% 50%';
-        // Preserve Leaflet's translate3d and add our rotation
-        const existing = el.style.transform.match(/translate3d\([^)]+\)/);
-        const t = existing ? existing[0] : '';
-        el.style.transform = `${t} rotate(${deg}deg)`;
-      }
-    });
-
-    // Panes that counter-rotate to stay upright (popups, controls, tooltips)
-    const fixedPanes = ['popupPane', 'tooltipPane', 'controlContainer'];
-    fixedPanes.forEach(name => {
-      const el = panes[name];
-      if (el) {
-        el.style.transformOrigin = '50% 50%';
-        const existing = el.style.transform.match(/translate3d\([^)]+\)/);
-        const t = existing ? existing[0] : '';
-        el.style.transform = `${t} rotate(${-deg}deg)`;
-      }
-    });
-
-    map.fire('rotate', { bearing: deg });
-  },
-
-  getBearing: function() { return this.bearing; }
-};
-</script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -94,12 +52,8 @@ window._mapRotation = {
 
   .panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
   .panel.active { display: flex; }
-  #map { flex: 1; width: 100%; touch-action: none; }
-  /* Clip the map panel so rotated tile edges never show outside the viewport */
-  #map-panel { overflow: hidden; }
-  /* Scale tile pane slightly so corners don't appear at any rotation angle.
-     sqrt(2) ≈ 1.415 covers full 45° rotation; 1.5 gives comfortable margin. */
-  .leaflet-tile-pane { transform-origin: 50% 50%; }
+  #map { flex: 1; width: 100%; }
+
   #map-panel { position: relative; }
 
   /* Clusters */
@@ -124,8 +78,6 @@ window._mapRotation = {
   /* Map tool buttons */
   .map-tools { position:absolute; bottom:20px; right:12px; display:flex; flex-direction:column; gap:8px; z-index:900; }
   .map-tool-btn { width:44px; height:44px; border-radius:10px; border:none; cursor:pointer; font-size:1.1rem; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow); transition:all 0.2s; }
-  .map-tool-btn.north-btn { background:rgba(245,239,227,0.95); color:var(--bark); font-size:1.2rem; transition:transform 0.3s ease; border:1.5px solid #c8b896; }
-  .map-tool-btn.north-btn:hover { background:#fff; }
   .map-tool-btn.suggest-btn { background:var(--suggest); color:#fff; }
   .map-tool-btn.suggest-btn.active { background:#0f3d52; box-shadow:0 0 0 3px #5ab4f0; }
   .map-tool-btn.suggest-btn:hover { background:#0f4d6a; }
@@ -272,7 +224,6 @@ window._mapRotation = {
   <div id="proximity-badge">🌳 No trees nearby</div>
   <div id="suggest-banner">📍 Tap on the map within 5m of you to suggest a new tree</div>
   <div class="map-tools">
-    <button class="map-tool-btn north-btn" id="north-btn" onclick="resetNorth()" title="Reset to north" style="display:none;">⬆</button>
     <button class="map-tool-btn suggest-btn" id="suggest-mode-btn" onclick="toggleSuggestMode()" title="Suggest a new tree">＋🌳</button>
   </div>
 </div>
@@ -423,15 +374,6 @@ function initMap() {
   });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap', maxZoom:19 }).addTo(map);
 
-  // North-reset button — updated by our custom rotation handler
-  map.on('rotate', function(e) {
-    const bearing = e.bearing || 0;
-    const btn = document.getElementById('north-btn');
-    if (!btn) return;
-    btn.style.display = Math.abs(bearing) > 2 ? 'flex' : 'none';
-    btn.style.transform = `rotate(${-bearing}deg)`;
-  });
-
   clusterGroup = L.markerClusterGroup({
     maxClusterRadius: 60, showCoverageOnHover: false,
     iconCreateFunction(cluster) {
@@ -457,61 +399,11 @@ function initMap() {
   if (bounds.length) map.fitBounds(bounds, { padding:[30,30] });
   updateStats();
 
-  // Initialise touch rotation
-  window._initTouchRotation(map);
-
   // Handle map click for suggest mode
   map.on('click', onMapClick);
 }
 
-// ── Two-finger touch rotation ────────────────────────────────────────────────
-(function() {
-  let startAngle  = null;
-  let startBear   = 0;
 
-  function getTouchAngle(touches) {
-    const dx = touches[1].clientX - touches[0].clientX;
-    const dy = touches[1].clientY - touches[0].clientY;
-    return Math.atan2(dy, dx) * 180 / Math.PI;
-  }
-
-  // We attach to the map container AFTER map is initialised (called from initMap end)
-  window._initTouchRotation = function(map) {
-    const el = map.getContainer();
-
-    el.addEventListener('touchstart', function(e) {
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        startAngle = getTouchAngle(e.touches);
-        startBear  = window._mapRotation.bearing;
-        // Disable Leaflet's built-in pan/zoom so only our rotation fires
-        map.dragging.disable();
-        map.touchZoom.disable();
-      }
-    }, { passive: false });
-
-    el.addEventListener('touchmove', function(e) {
-      if (e.touches.length === 2 && startAngle !== null) {
-        e.preventDefault();
-        const angle = getTouchAngle(e.touches);
-        const delta = angle - startAngle;
-        window._mapRotation.apply(map, startBear + delta);
-      }
-    }, { passive: false });
-
-    el.addEventListener('touchend', function(e) {
-      // Re-enable pan/zoom when fingers lift
-      map.dragging.enable();
-      map.touchZoom.enable();
-      if (e.touches.length < 2) {
-        startAngle = null;
-        // Snap to north if within 12 degrees
-        const b = ((window._mapRotation.bearing % 360) + 360) % 360;
-        if (b < 12 || b > 348) smoothRotateTo(0);
-      }
-    }, { passive: true });
-  };
-})();
 
 // ════════════════════════════════════════════════════════════
 // POPUP — tree attributes + visit + status reporting
@@ -653,25 +545,6 @@ function getNearbySet() {
 // ════════════════════════════════════════════════════════════
 // SUGGEST MODE
 // ════════════════════════════════════════════════════════════
-function resetNorth() {
-  smoothRotateTo(0);
-  document.getElementById('north-btn').style.display = 'none';
-}
-
-function smoothRotateTo(targetDeg) {
-  const start   = window._mapRotation.bearing;
-  const diff    = targetDeg - start;
-  const dur     = 350; // ms
-  const t0      = performance.now();
-  function step(now) {
-    const p = Math.min(1, (now - t0) / dur);
-    const ease = p < 0.5 ? 2*p*p : -1+(4-2*p)*p; // ease in-out quad
-    window._mapRotation.apply(map, start + diff * ease);
-    if (p < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
 function toggleSuggestMode() {
   suggestMode = !suggestMode;
   const btn    = document.getElementById('suggest-mode-btn');

@@ -4,7 +4,7 @@
   "description": "Explore and track York's council-owned trees",
   "start_url": "./index.html",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#2d4a27",
   "theme_color": "#2d4a27",
   "icons": [
@@ -21,6 +21,10 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["travel", "lifestyle", "navigation"],
+  "categories": [
+    "travel",
+    "lifestyle",
+    "navigation"
+  ],
   "lang": "en-GB"
 }
